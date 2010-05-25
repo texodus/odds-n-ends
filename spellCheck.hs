@@ -66,12 +66,12 @@ known    dictionary          words    =  filter (flip M.member dictionary) words
 edits :: Int -> String -> [String]
 edits    n      word 
     | n == 1           =  foldl' union [] [deletes, transposes, replaces, inserts]
-    | otherwise        =  edits (n - 1) word >>= (edits 1) -- [y | x <- edits (n - 1) word, y <- (edits 1 x)]
+    | otherwise        =  edits (n - 1) word >>= edits 1 -- [y | x <- edits (n - 1) word, y <- (edits 1 x)]
 
-    where deletes      =  [(sub 0 x) ++ (sub (x + 1) len) | x <- [0..(len - 1)]]
-          transposes   =  [(sub 0 x) ++ [(word !! (x + 1)), (word !! x)] ++ (sub (x + 2) len) | x <- [0..(len - 2)]]
-          replaces     =  [(sub 0 x) ++ [c] ++ (sub (x + 1) len) | x <- [0..(len - 1)], c <- alphabet]
-          inserts      =  [(sub 0 x) ++ [c] ++ (sub x len) | x <- [0..len], c <- alphabet]
+    where deletes      =  [sub 0 x ++ sub (x + 1) len | x <- [0 .. len - 1]]
+          transposes   =  [sub 0 x ++ [word !! (x + 1), word !! x] ++ sub (x + 2) len | x <- [0 .. len - 2]]
+          replaces     =  [sub 0 x ++ [c] ++ sub (x + 1) len | x <- [0..len - 1], c <- alphabet]
+          inserts      =  [sub 0 x ++ [c] ++ sub x len | x <- [0 .. len], c <- alphabet]
      
           sub i j      =  take (j - i) $ drop i $ word
           len          =  length word

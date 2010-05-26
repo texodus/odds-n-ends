@@ -1,5 +1,7 @@
 import qualified Data.Set as S
+import qualified Data.Map as M
 import System.Environment
+import System.CPUTime
 import Random
 import Control.Applicative ((<$>))
 
@@ -12,33 +14,35 @@ import Control.Applicative ((<$>))
 --------------------------------------------------------------------------------
 
 type Cross = (Int, Int)
-type Edge  = (Cross, Cross)
+
+data Edge  = Edge Cross Int Int
+           deriving (Show, Ord, Eq)
 
 data Board = Board (S.Set Cross) (S.Set Edge)
 
-data Move = Move Cross [Edge]
+data Move  = Move Cross [Edge]
+           deriving (Show)
 
-type Orientation = (Int, Int) -> Int
-
-defaultBoard = ". . . # # # # . . .\n" ++
-               "                   \n" ++
-               ". . . # . . # . . .\n" ++
-               "                   \n" ++
-               ". . . # . . # . . .\n" ++
-               "                   \n" ++
-               "# # # # . . # # # #\n" ++
-               "                   \n" ++
-               "# . . . . . . . . #\n" ++
-               "                   \n" ++
-               "# . . . . . . . . #\n" ++
-               "                   \n" ++
-               "# # # # . . # # # #\n" ++
-               "                   \n" ++
-               ". . . # . . # . . .\n" ++
-               "                   \n" ++
-               ". . . # . . # . . .\n" ++
-               "                   \n" ++
-               ". . . # # # # . . .\n"
+defaultBoard :: String
+defaultBoard =  ". . . O O O O . . .\n" ++
+                "                   \n" ++
+                ". . . O . . O . . .\n" ++
+                "                   \n" ++
+                ". . . O . . O . . .\n" ++
+                "                   \n" ++
+                "O O O O . . O O O O\n" ++
+                "                   \n" ++
+                "O . . . . . . . . O\n" ++
+                "                   \n" ++
+                "O . . . . . . . . O\n" ++
+                "                   \n" ++
+                "O O O O . . O O O O\n" ++
+                "                   \n" ++
+                ". . . O . . O . . .\n" ++
+                "                   \n" ++
+                ". . . O . . O . . .\n" ++
+                "                   \n" ++
+                ". . . O O O O . . .\n"
 
 
 
@@ -53,64 +57,76 @@ interleave    []     (x:xs) =  x : interleave [] xs
 interleave    (x:xs) []     =  x : interleave xs []
 interleave    (x:xs) (y:ys) =  x : y : interleave xs ys 
 
-row :: Orientation
-row =  fst
-
-column :: Orientation
-column =  snd
-
-boundaries :: S.Set Cross -> ((Int, Int), (Int, Int))
-boundaries    crosses     =  ((bound min row, bound min column), (bound max row, bound max column))
+boundaries :: S.Set Cross -> (Cross, Cross)
+boundaries    crosses       =  ((bound min fst, bound min snd), (bound max fst, bound max snd))
   
     where bound pred orient = let xs = map orient $ S.elems crosses
                               in  foldr pred (head xs) (tail xs)
                                 
+
+
+
+
+-- Rendering & Parsing --
+--------------------------------------------------------------------------------
+
 instance Show Board where
   
-  show (Board crosses edges) = concat $ interleave drawOdd drawEven
+  show (Board crosses edges) = concat $ interleave drawOddRows drawEvenRows
                                
-    where drawOdd        = [interleave (drawCross x) (drawOddEdge x) ++ "\n" | x <- [minRow .. maxRow]]
-          drawCross x    = [if S.member (x, y) crosses then 'O' else '.' | y <- [minCol .. maxCol]]       
-          drawOddEdge x  = [if S.member ((x, y), (x, y + 1)) edges then '-' else ' ' | y <- [minCol .. maxCol - 1]]
-          drawEven       = [drawEvenEdge x ++ "\n" | x <- [minRow .. maxRow - 1]] 
-          drawEvenEdge x = interleave (drawCols x) (drawXs x)
-          drawCols x     = [if S.member ((x, y), (x + 1, y)) edges then '|' else ' ' | y <- [minCol .. maxCol]]
-          drawXs x       = [drawCell x y | y <- [minCol .. maxCol - 1]]
-          drawCell x y   = case ((S.member ((x, y), (x + 1, y + 1)) edges), (S.member ((x + 1, y), (x, y + 1)) edges)) of
-                             (True,  True)  -> 'X'
-                             (True,  False) -> '\\'
-                             (False, True)  -> '/'
-                             (False, False) -> ' '
+    where ((minRow, minCol), (maxRow, maxCol)) = boundaries crosses 
+
+          drawCrosses x         = do y <- [minCol .. maxCol]
+                                     if (x, y) `S.member` crosses then "O" else "."        
           
-          ((minRow, minCol), (maxRow, maxCol)) = boundaries crosses
+          drawBetweenCrosses x  = do y <- [minCol .. maxCol - 1]
+                                     if Edge (x, y) 0 1 `S.member` edges then "-" else " "
+
+          drawOddColumns x      = do y <- [minCol .. maxCol]
+                                     if Edge (x, y) 1 0 `S.member` edges then "|" else " "
+
+          drawOddRows           = do x <- [minRow .. maxRow] 
+                                     return $ interleave (drawCrosses x) (drawBetweenCrosses x) ++ "\n"
+
+          drawEvenRows          = [ drawEvenRowEdges x ++ "\n" | x <- [minRow .. maxRow - 1] ] 
+          drawEvenColumns x     = map (drawCell x) [minCol .. maxCol - 1]
+          drawEvenRowEdges x    = interleave (drawOddColumns x) (drawEvenColumns x)
+          drawCell  x y         = case (Edge (x, y) 1 1 `S.member` edges, Edge (x + 1, y) (-1) 1 `S.member` edges) of
+                                    (True,  True)  -> 'X'
+                                    (True,  False) -> '\\'
+                                    (False, True)  -> '/'
+                                    (False, False) -> ' '
+          
+          
+
   
   
 parse :: String -> Board
 parse    string =  Board (S.fromList $ getCrosses 0 0 string) (S.fromList $ getEdges 0 0 string)
 
   where getCrosses x y [] = []
-        getCrosses x y ('#':as)  = (x, y) : getCrosses x (y + 1) as
+        getCrosses x y ('O':as)  = (x, y) : getCrosses x (y + 1) as
         getCrosses x y ('\n':as) = getCrosses (x + 1) 0 (drop 1 $ dropWhile (/= '\n') as) 
         getCrosses x y ('.':as)  = getCrosses x (y + 1) as
-        getCrosses x y (_:as)    = getCrosses x y as
+        getCrosses x y (_:as)    = getCrosses x y as 
         
         getEdges x y []          = []
-        getEdges x y ('#':as)    = getEdges x (y + 1) as
-        getEdges x y ('-':as)    = ((x, y), (x, y - 1)) : ((x, y - 1), (x, y)) : getEdges x y as
+        getEdges x y ('O':as)    = getEdges x (y + 1) as
+        getEdges x y ('-':as)    = Edge (x, y - 1) 0 1 : getEdges x y as
         getEdges x y ('\n':as)   = getEdges' x 0 as
         getEdges x y ('.':as)    = getEdges x (y + 1) as
         getEdges x y (_:as)      = getEdges x y as
         
         getEdges' x y []         = []
         getEdges' x y ('\n':as)  = getEdges (x + 1) 0 as
-        getEdges' x y ('|':as)   = ((x,y),(x+1,y)) : ((x+1,y),(x,y)) : getEdges'' x y as 
+        getEdges' x y ('|':as)   = Edge (x, y) 1 0 : getEdges'' x y as 
         getEdges' x y (_:as)     = getEdges'' x y as
         
         getEdges'' x y []        = []
         getEdges'' x y ('\n':as) = getEdges (x + 1) 0 as
-        getEdges'' x y ('\\':as) = ((x,y),(x+1,y+1)) : ((x+1,y+1),(x,y)) : getEdges' x (y + 1) as
-        getEdges'' x y ('/':as)  = ((x+1,y),(x,y+1)) : ((x,y+1),(x+1,y)) : getEdges' x (y + 1) as
-        getEdges'' x y ('X':as)  = ((x,y),(x+1,y+1)) : ((x+1,y+1),(x,y)) : ((x+1,y),(x,y+1)) : ((x,y+1),(x+1,y)) : getEdges' x (y + 1) as
+        getEdges'' x y ('\\':as) = Edge (x, y) 1 1 : getEdges' x (y + 1) as
+        getEdges'' x y ('/':as)  = Edge (x + 1, y) (-1) 1 : getEdges' x (y + 1) as
+        getEdges'' x y ('X':as)  = Edge (x, y) 1 1 : Edge (x + 1, y) (-1) 1 : getEdges' x (y + 1) as
         getEdges'' x y (_:as)    = getEdges' x (y + 1) as
 
 
@@ -121,34 +137,34 @@ parse    string =  Board (S.fromList $ getCrosses 0 0 string) (S.fromList $ getE
 --------------------------------------------------------------------------------
 
 getMoves :: Board                 -> [Move]
-getMoves    (Board crosses edges) =  [move | x <- [minRow - 1.. maxRow + 1], y <- [minCol - 1 .. maxCol + 1], move <- moves x y]  
+getMoves    (Board crosses edges) =  [ move | x <- [minRow - 1 .. maxRow + 1], 
+                                              y <- [minCol - 1 .. maxCol + 1], 
+                                              move <- moves x y ]  
     
   where ((minRow, minCol), (maxRow, maxCol)) = boundaries crosses 
 
-        moves x y | (x,y) `S.member` crosses = []
-                  | otherwise                = [ move | x' <- [-1 .. 1], 
-                                                        y' <- [-1 .. 1], 
-                                                        z  <- [0  .. 4], 
-                                                        x' /= 0 || y' /= 0, 
-                                                        move <- isMove z 5 (x - (x' * z)) (y - (y' * z)) x' y' x y ]
+        moves x y | (x, y) `S.member` crosses = []
+                  | otherwise                 = [ move | x' <- [-1 .. 1], 
+                                                         y' <- [0 .. 1], 
+                                                         z  <- [0  .. 4], 
+                                                         x' /= 0 || y' /= 0, 
+                                                         move <- isMove z 5 (x - (x' * z)) (y - (y' * z)) x' y' ]
           
-            where isMove q n x y x' y' a b | n == 0 = let (x0, y0) = (x - (5 * x'), y - (5 * y'))
-                                                          path n x y | n == 0    = []
-                                                                     | otherwise = ((x,y),(x+x',y+y')) : path (n - 1) (x + x') (y + y') 
-                                                      in  return $ Move (a, b) $ path 4 x0 y0
+            where isMove z n a b x' y' | n == 0 = let x0 = a - (5 * x')
+                                                      y0 = b - (5 * y')
+                                                      path n a b | n == 0    = []
+                                                                 | otherwise = Edge (a, b) x' y' : path (n - 1) (a + x') (b + y') 
+                                                  in  return $ Move (x, y) $ path 4 x0 y0
 
-                                           | ((x,y), (x+x',y+y')) `S.member` edges = []
-                                           | q == 0 || (x,y) `S.member` crosses    = isMove (q - 1) (n - 1) (x + x') (y + y') x' y' a b
-                                           | otherwise                             = []
-            
-        
+                                       | Edge (a, b) x' y' `S.member` edges  = []
+                                       | z == 0 || (a, b) `S.member` crosses = isMove (z - 1) (n - 1) (a + x') (b + y') x' y'
+                                       | otherwise                         = []
           
 applyMove :: Board              -> Move                -> Board
-applyMove    (Board crosses edges) (Move cross (a:b:c:d:[])) =  Board (S.insert cross crosses) (S.union newEdges edges)
-
-    where newEdges = S.union (S.fromList [a,b,c,d]) (S.fromList (map rev [a,b,c,d]))
-          rev ((a,b),(c,d)) = ((c,d),(a,b))
+applyMove    (Board crosses edges) (Move cross edges') =  Board (S.insert cross crosses) (S.union edges (S.fromList (edges' ++ (map dual edges'))))
         
+  where dual (Edge (x, y) x' y') = Edge (x + x', y + y') (-x') (-y')
+
 doMoves :: Int -> Board -> Board
 doMoves    0      board =  board
 doMoves    n      board =  doMoves (n - 1) (applyMove board (last $ getMoves board))
@@ -162,14 +178,36 @@ doMoves    n      board =  doMoves (n - 1) (applyMove board (last $ getMoves boa
 
 type Strategy = StdGen -> [Move] -> Board -> (Move, StdGen)
 
+
+
+
+
+-- | No Strategy - moves are chosen entirely at random from entropy source, with
+--   each possible move equally likely
+
 noStrategy :: Strategy
 noStrategy    gen moves _ = let (i, gen') = randomR (0, length moves - 1) gen
                             in  (moves !! i, gen')
+                                
+
+-- | No Strategy - moves are chosen entirely at random from entropy source, with
+--   each possible move equally likely
+
+aStrategy :: Strategy
+aStrategy    gen moves _ = (head moves, gen)
+
+
+
+
+
+-- | Outside Strategy - Moves are split into the group of moves at the edge of 
+--   the grid and those which aren't.  If there are moves in teh first group, a 
+--   random moves is chosen from there - otherwise, a random move is chosen from
+--   the entire move set.
 
 outsideStrategy :: Strategy
-outsideStrategy    gen moves board@(Board crosses _) = case length priorityMoves > 0 of
-                                                         True  -> noStrategy gen priorityMoves board
-                                                         False -> noStrategy gen moves board 
+outsideStrategy    gen moves board@(Board crosses _) | length priorityMoves > 0 = noStrategy gen priorityMoves board
+                                                     | otherwise                = noStrategy gen moves board 
 
     where priorityMoves            = filter isOutside moves
           isOutside (Move (x,y) _) = x `elem` [minRow-1, maxRow+1] || y `elem` [minCol-1 , maxCol+1] 
@@ -186,26 +224,33 @@ outsideStrategy    gen moves board@(Board crosses _) = case length priorityMoves
 main :: IO ()
 main =  gameLoop 0 0
 
+time :: IO t -> IO (Double, t)
+time a = do start <- getCPUTime
+            v     <- a
+            end   <- getCPUTime
+            let diff = (fromIntegral (end - start)) / (10^12)
+            return (diff :: Double, v)
+
+
+
+
 gameLoop :: Int -> Int -> IO ()
-gameLoop    hi     tries=  do (n, board) <- play
+gameLoop    hi     tries=  do (t, (n, history)) <- time play
                               case n > hi of
                                 False -> gameLoop hi (tries + 1)
-                                True  -> do putStrLn $ (show n) ++ " moves - " ++ (show tries) ++ " attempts"
+                                True  -> do mapM_ (putStrLn . (++ "\n\n") . show) (reverse history)
                                             putStrLn ""
-                                            putStrLn (show board)
-                                            putStrLn ""
+                                            putStrLn $ (show n) ++ " moves - " ++ (show tries) ++ " attempts"
+                                            putStrLn $ (show t) ++ "s elapsed"
+                                            putStrLn "\n==================================================================\n"
                                             gameLoop n (tries + 1)
 
-play :: IO (Int, Board)
+play :: IO (Int, [Board])
 play = do gen <- newStdGen
-          play' gen 0 $ parse defaultBoard
+          play' gen 0 [parse defaultBoard]
 
-       where play' gen n board = let moves = getMoves board
-                                 in  case length moves == 0 of
-                                       True -> return (n, board)
-                                       False -> let (move, gen') = outsideStrategy gen moves board
-                                                in  play' gen' (n + 1) (applyMove board move)
-
-                                             
-                                           
-
+       where play' gen n history@(board:_) = let moves = getMoves board
+                                             in  case length moves == 0 of
+                                               True -> return (n, history)
+                                               False -> let (move, gen') = noStrategy gen moves board
+                                                        in  play' gen' (n + 1) ((applyMove board move):history)
